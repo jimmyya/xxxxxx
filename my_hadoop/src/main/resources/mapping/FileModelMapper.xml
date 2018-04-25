@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.chen.dao.FileMapper">
+    <!-- 这里namespace必须是UserMapper接口的路径，不然要运行的时候要报错 “is not known to the MapperRegistry” -->
+    <insert id="insertFileModel" parameterType="FileModel">
+        insert into file(name,parent_name,md5,time) values(#{name},#{parentName},#{md5},#{time})
+        <!-- 这里sql结尾不能加分号，否则报“ORA-00911”的错误 -->
+    </insert>
+
+    <delete id="deleteFileModel">
+        delete from file where id=#{id}
+    </delete>
+
+    <!-- 这里的id必须和UserMapper接口中的接口方法名相同，不然运行的时候也要报错 -->
+    <select id="queryFileModel" resultType="FileModel">
+        select id,name,parent_name as parentName,md5,time from file
+        <where>
+            1=1
+            <if test="name!=null">
+               and  name=#{name}
+            </if>
+            <if test="parentName!=0">
+                and parent_name=#{parentName}
+            </if>
+            <if test="id!=0">
+                and id=#{id}
+            </if>
+            <if test="md5!=null and md5!=''">
+                and md5=#{md5}
+            </if>
+        </where>
+    </select>
+
+
+
+</mapper>

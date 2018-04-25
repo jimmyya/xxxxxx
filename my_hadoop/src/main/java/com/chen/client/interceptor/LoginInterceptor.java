@@ -19,7 +19,7 @@ public class LoginInterceptor implements MethodInterceptor {
                 flag = ((UserModel) o).isLogin();
             }
         }
-        if ("loginUser".equals(method.getName())) {
+        if ("loginUser".equals(method.getName()) || "loginUserByAuto".equals(method.getName())) {
             flag = true;
         }
         if (flag) {

@@ -119,8 +119,9 @@ public class FtpService {
             files = ftpClient.listFiles(user.getWorkPath());
             for (FTPFile file : files) {
                 if (file.isFile()) {
-                    System.out.println(user.getSimpleDateFormat(file
-                            .getTimestamp()) + "	" + file.getName());
+//                    System.out.println(user.getSimpleDateFormat(file
+//                            .getTimestamp()) + "	" + file.getName());
+                    System.out.println(file.toString());
                 } else if (file.isDirectory()) {
                     System.out.println(file.toString());
 //                    System.out.println(user.getSimpleDateFormat(file.getTimestamp()) + "	<dir>  /" + file.getName());
@@ -131,6 +132,7 @@ public class FtpService {
         } catch (IOException e) {
             logger.error(e.getMessage(), e);
         }
+
 
         return flag;
     }
@@ -153,7 +155,7 @@ public class FtpService {
         // 遍历文件
         try {
             // 切换到相应的文件夹
-            ftpClient.changeWorkingDirectory(user.getWorkPath());
+//            ftpClient.changeWorkingDirectory(user.getWorkPath());
             // 下载文件
             File localFile = new File(file.getNewFileURL());
             OutputStream os = new FileOutputStream(localFile);
@@ -206,8 +208,8 @@ public class FtpService {
             InputStream is = new FileInputStream(originFile);
             // 准备服务器
             ftpClient.setFileType(FTPClient.BINARY_FILE_TYPE);
-            ftpClient.makeDirectory(filePath);
-            ftpClient.changeWorkingDirectory(filePath);
+//            ftpClient.makeDirectory(filePath);
+//            ftpClient.changeWorkingDirectory(filePath);
             ftpClient.storeFile(fileName, is);
             is.close();
             flag = true;
@@ -226,17 +228,28 @@ public class FtpService {
      */
     public void changDirectory(UserModel user) {
         Scanner scanner = ScannerUtil.getScanner();
-        String tempPath = File.separator + scanner.next();
+        String tempPath =  scanner.next();
         FTPClient ftpClient = user.getFtpClient();
+//        try {
+//            ftpClient.makeDirectory(tempPath);
+//        } catch (IOException e) {
+//            logger.error(e.getMessage(), e);
+//        }
+
         try {
-            ftpClient.makeDirectory(tempPath);
-        } catch (IOException e) {
-            logger.error(e.getMessage(), e);
-        }
-        user.setWorkPath(tempPath);// 输入示例： temp
-        try {
-            ftpClient.changeWorkingDirectory(tempPath);
-            user.setFtpClient(ftpClient);
+            if(ftpClient.changeWorkingDirectory(tempPath)) {
+                if(tempPath.startsWith("/")) {
+                    user.setWorkPath(tempPath);
+                } else {
+                    if("/".equals(user.getWorkPath())) {
+                        user.setWorkPath("/"+tempPath);
+                    } else {
+                        user.setWorkPath(user.getWorkPath() + "/" + tempPath);
+                    }
+                }
+                user.setFtpClient(ftpClient);
+            }
+
         } catch (IOException e) {
             logger.error(e.getMessage(), e);
         }
@@ -295,7 +308,7 @@ public class FtpService {
         FTPClient ftpClient = user.getFtpClient();
         System.out.print("删除文件    ");
         try {
-            ftpClient.changeWorkingDirectory(user.getWorkPath());
+//            ftpClient.changeWorkingDirectory(user.getWorkPath());
             ftpClient.deleteFile(scanner.next());
         } catch (IOException e) {
             logger.error(e.getMessage(), e);
@@ -303,6 +316,16 @@ public class FtpService {
 
     }
 
+    public void mkDir(UserModel user) {
+        FTPClient ftpClient=user.getFtpClient();
+        Scanner scanner = ScannerUtil.getScanner();
+        try {
+            ftpClient.makeDirectory(scanner.next());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+    }
     /**
      * 断开链接
      *
@@ -348,6 +371,7 @@ public class FtpService {
         }
         return value;
     }
+
 
 
 }

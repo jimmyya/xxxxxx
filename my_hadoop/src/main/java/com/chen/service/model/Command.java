@@ -1,8 +1,11 @@
 package com.chen.service.model;
 
+import com.chen.dao.FileMapper;
+import com.chen.model.FileModel;
 import com.chen.service.server.InitService;
 import com.chen.service.server.LogUserService;
 import com.chen.service.utils.FileSpliter;
+import com.chen.service.utils.MybatisUtil;
 import org.apache.commons.io.IOUtils;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
@@ -12,6 +15,9 @@ import org.apache.http.entity.mime.MultipartEntityBuilder;
 import org.apache.http.entity.mime.content.FileBody;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
+import org.apache.ibatis.session.SqlSession;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.apache.tomcat.jni.Time;
 
 import java.io.*;
 import java.math.BigInteger;
@@ -47,6 +53,11 @@ public class Command {
     private static Socket dSocket = null;
 
     private static String[] strs = new String[10];// 用来存储分解的指令//从中可以获得我们要的字符串
+
+    static SqlSessionFactory sqlSessionFactory = null;
+    static {
+        sqlSessionFactory = MybatisUtil.getSqlSessionFactory();
+    }
 
     public Command(Socket socket, BufferedReader reader, BufferedWriter writer) {
         super();
@@ -108,7 +119,7 @@ public class Command {
                     response("332 User required.");// 用户名
                 }
                 break;
-                case "XMKD": {// 创建新文件
+                case "MKD": {// 创建新文件
                     commandXMKD();
                 }
                 case "USER": {
@@ -139,7 +150,7 @@ public class Command {
 
                 }
                 break;
-                case "DELE": {// CD 命令
+                case "DELE": {// delete 命令
                     commandDELE();
 
                 }
@@ -170,16 +181,113 @@ public class Command {
      */
     private void commandXMKD() {
         String mkdirFile = user.getWorkDir() + "/" + strs[1];
-        File file = new File(mkdirFile);
-        if (!file.exists()) {
-            file.mkdir();
+        String path="";
+        try {
+            path = user.getWorkDir().substring(user.getWorkDir().indexOf(user.getOriDir()) + user.getOriDir().length() + 1);
+        }catch(Exception e){
+
+        }
+//        File file = new File(mkdirFile);
+//        if (!file.exists()) {
+//            file.mkdir();
+//        }
+        SqlSession sqlSession = sqlSessionFactory.openSession();
+        FileModel fileModel = new FileModel();
+        int parentName = 0;
+        String name;
+        String [] filePart=path.split("/");
+        FileMapper fileMapper = sqlSession.getMapper(FileMapper.class);
+        if("".equals(path)) {
+            fileModel.setId(-1);
+        } else {
+            for (String temp : filePart) {
+                name = temp;
+                fileModel.setId(0);
+                fileModel.setParentName(parentName);
+                fileModel.setName(name);
+                fileModel = fileMapper.queryFileModel(fileModel).get(0);
+                parentName = fileModel.getId();
+            }
+        }
+        try {
+            try {
+                fileModel.setMd5("");
+                fileModel.setName(strs[1]);
+                fileModel.setParentName(fileModel.getId());
+                fileModel.setTime(TimeDealer.timeFormat(new Date()));
+                fileMapper.insertFileModel(fileModel);
+                sqlSession.commit();// 这里一定要提交，不然数据进不去数据库中
+            } finally {
+                sqlSession.close();
+            }
+        } finally {
+            sqlSession.close();
         }
     }
+
 
     /**
      * 删除文件
      */
-    private void commandDELE() {
+    /**
+     * 删除真正的文件
+     * @param fileName
+     */
+    private void deleteRealFile(String fileName) {
+        //删除本地文件
+//        String fileAllPath=user.getWorkDir()+"/" + fileName;
+//        File fileAllFile=new File(fileAllPath);
+//        String [] fileTemp=fileAllFile.list();
+//        for(String temp:fileTemp) {
+//            new File(fileAllPath+"/"+temp).delete();
+//        }
+        String fileAllPath=user.getOriDir()+"/" + fileName;
+        File fileAllFile=new File(fileAllPath);
+        String [] fileTemp=fileAllFile.list();
+        for(String temp:fileTemp) {
+            new File(fileAllPath+"/"+temp).delete();
+        }
+        fileAllFile.delete();
+        //删除服务器的内容
+        for(int j=0;j<SERVICES.size();j++) {
+            String url = SERVICES.get(j);//拿出一个服务器地址
+            url += "/deleteFile/"+fileName+"_"+j+".part";
+            HttpClient client = HttpClients.createDefault();
+            HttpPost post = new HttpPost(url);
+            HttpResponse response = null;
+            try {
+                response = client.execute(post);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void deleteOneFileByMd5(int id,String md5) {
+        SqlSession sqlSession = sqlSessionFactory.openSession();
+        FileModel fileModel = new FileModel();
+        fileModel.setMd5(md5);
+        FileMapper fileMapper = sqlSession.getMapper(FileMapper.class);
+        List<FileModel> fileModelList = fileMapper.queryFileModel(fileModel);
+        if(fileModelList.size()==1) {
+            String deleteFile=fileModelList.get(0).getMd5();
+            //删除文件
+            deleteRealFile(deleteFile);
+        } else {
+
+        }
+        fileModel.setId(id);
+        fileMapper.deleteFileModel(fileModel);
+        sqlSession.commit();
+        sqlSession.close();
+
+    }
+
+    /**
+     * 删除一个文件
+     * @param originFileName
+     */
+    private void deleteOneFile(String originFileName) {
         String deleteFile= "";
         int count=0;//文件计数器
         // 删除属性内容
@@ -188,12 +296,12 @@ public class Command {
         Properties properties=new Properties();
         try (FileInputStream  fis = new FileInputStream(dir)) {
             properties.load(fis);
-            deleteFile=properties.getProperty(strs[1]);
+            deleteFile=properties.getProperty(originFileName);
             if(deleteFile==null) {
                 response("200 File not exist.");//删除完毕
                 return ;
             }
-            properties.remove(strs[1]);
+            properties.remove(originFileName);
             Enumeration en=properties.propertyNames();
             while(en.hasMoreElements()) {
                 if(deleteFile.equals(properties.getProperty((String)en.nextElement()))) {
@@ -219,12 +327,134 @@ public class Command {
         } catch (Exception e) {
             System.out.println(e);
         }
-
-
         if(count==0) {
             // 删除文件
-            delFolder(deleteFile);
+            deleteRealFile(deleteFile);
         }
+    }
+
+    private boolean deleteFolderById(int id) {
+        SqlSession sqlSession = sqlSessionFactory.openSession();
+        FileModel fileModel = new FileModel();
+        fileModel.setParentName(id);
+        FileMapper fileMapper = sqlSession.getMapper(FileMapper.class);
+        List<FileModel> fileModelList = fileMapper.queryFileModel(fileModel);
+        for(FileModel temp:fileModelList) {
+            if(!("".equals(temp.getMd5()))) {
+                // 文件
+                deleteOneFileByMd5(temp.getId(),temp.getMd5());
+            } else {
+                deleteFolderById(temp.getId());
+            }
+        }
+        fileModel.setId(id);
+        fileMapper.deleteFileModel(fileModel);
+        sqlSession.commit();
+        sqlSession.close();
+        return true;
+    }
+
+    private  boolean deleteFolder(String path) {
+        Properties properties=new Properties();
+        String dir = LogUserService.class.getResource("/").getPath();
+        dir += "file_level.properties";
+        FileInputStream fis=null;
+        FileOutputStream fos=null;
+        try {
+            fis = new FileInputStream(dir);
+            properties.load(fis);
+            boolean flag = false;
+            if (path.contains("\\.")) {
+                // 假如包含. 那就当他是文件了
+                deleteOneFile(path);
+            } else {
+                // 当他是文件
+                Enumeration en = properties.propertyNames();
+                while (en.hasMoreElements()) {
+                    String sonFileName = (String) en.nextElement();
+                    if (properties.getProperty(sonFileName).equals(path)) {
+                        deleteFolder(sonFileName);
+                    }
+                }
+                properties.remove(path);
+                fos = new FileOutputStream(dir);
+                properties.store(fos, "");
+            }
+        } catch (Exception e) {
+            System.out.println(e);
+        } finally {
+            try {
+                fis.close();
+                fos.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        return true;
+    }
+
+    private void commandDELE() {
+        Properties properties=new Properties();
+//        String dir = LogUserService.class.getResource("/").getPath();
+//        dir += "file_level.properties";
+        FileInputStream fis=null;
+        try {
+            String path="";
+            try {
+                path = user.getWorkDir().substring(user.getWorkDir().indexOf(user.getOriDir()) + user.getOriDir().length() + 1);
+            }catch(Exception e){
+
+            }
+            SqlSession sqlSession = sqlSessionFactory.openSession();
+            int parentName = -1;
+            String name;
+            FileModel fileModel = new FileModel();
+            if(strs[1].startsWith("/")) {
+                path=strs[1].substring(1);
+            } else {
+                if("".equals(path)) {
+                  path=strs[1];
+                } else {
+                    path=path+"/"+strs[1];
+                }
+            }
+            String [] filePart=path.split("/");
+            FileMapper fileMapper = sqlSession.getMapper(FileMapper.class);
+            for (String temp : filePart) {
+                name = temp;
+                fileModel.setId(0);
+                fileModel.setParentName(parentName);
+                fileModel.setName(name);
+                fileModel = fileMapper.queryFileModel(fileModel).get(0);
+                parentName = fileModel.getId();
+            }
+
+//            fis=new FileInputStream(dir);
+//            properties.load(fis);
+            if(!"".equals(fileModel.getMd5())) {
+                // 如果删除的是文件
+//                deleteOneFile(strs[0]);
+                deleteOneFileByMd5(fileModel.getId(),fileModel.getMd5());
+            } else {
+                // 如果刪除的是文件夾
+                // 1. 收集底下的文件 考虑文件夹下也有文件
+                deleteFolderById(fileModel.getId());
+            }
+            sqlSession.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+
+//            try {
+////                fis.close();
+//            } catch (IOException e) {
+//                e.printStackTrace();
+//            }
+        }
+
+
+        //删除的是文件
+
         response("200 Command complete.");//删除完毕
     }
     /**
@@ -232,12 +462,16 @@ public class Command {
      * 对文件进行分隔 然后上传
      */
     private void commandSTOR() throws Exception {
-         String oldFileUrl = "";
+        String oldFileUrl = "";
         String propertyFileName="";
         if (strs[1].contains(user.getOriDir())) {// 万一客户直接就把全路径写了呢
             oldFileUrl = strs[1];
         } else {
-            oldFileUrl = user.getWorkDir() + File.separator + strs[1];// 请求文件的全路径
+            oldFileUrl = user.getWorkDir() + "/" + strs[1];// 请求文件的全路径
+        }
+        String md5Origin="";
+        if(strs[1].split("#").length>=2) {
+            md5Origin=strs[1].split("#")[1];
         }
         strs[1]=strs[1].split("#")[0];
         propertyFileName=strs[1];
@@ -251,48 +485,117 @@ public class Command {
         FileInputStream fis=null;
         FileOutputStream fos=null;
 
-        String dir = LogUserService.class.getResource("/").getPath();
-        Properties properties=new Properties();
-        dir += "file_name.properties";
-        fis = new FileInputStream(dir);
-
-        properties.load(fis);
-        fos = new FileOutputStream(dir);
-        Enumeration en =  properties.propertyNames();
-        String md5Origin="";
-        if(strs[1].split("#").length>=2) {
-            md5Origin=strs[1].split("#")[1];
+//        String dir = LogUserService.class.getResource("/").getPath();
+//        Properties properties=new Properties();
+//        dir += "file_name.properties";
+//        fis = new FileInputStream(dir);
+//
+//        properties.load(fis);
+//        fos = new FileOutputStream(dir);
+//        Enumeration en =  properties.propertyNames();
+//
+//        // 重写 fuck
+//        while(en.hasMoreElements()) {
+//            String fileName=(String)en.nextElement();
+//            String fileKey=(String)properties.getProperty(fileName);
+//            if(fileKey.equals(md5Origin)) {
+//                properties.setProperty(fileName,md5Origin);
+//                properties.store(fos,"");
+//                //  TODO 结束 直接返回
+//                response("226 Transfer complete.");//传输完毕
+//                return ;
+//            }
+//
+//            if(fileName.equals(strs[1])) {
+//                String[] tempFileName=strs[1].split("\\.");
+//                String houZhui="";
+//                if(tempFileName.length>=2) {
+//                    houZhui=tempFileName[1];
+//                }
+//                if(tempFileName[0].endsWith(")")) {
+//                    String temp=tempFileName[0].substring(tempFileName[0].indexOf("("),tempFileName[0].indexOf(")"));
+//                    try {
+//                        int tempNum=Integer.parseInt(temp)+1;
+//                        propertyFileName=tempFileName[0].substring(0,tempFileName[0].indexOf("("))
+//                                +"("+tempNum+")"+houZhui;
+//                    } catch(Exception e) {
+//                        System.out.println(e);
+//                    }
+//                } else {
+//                    propertyFileName = tempFileName[0] + "(1)." + houZhui;
+//                }
+//                oldFileUrl = user.getWorkDir() + "/" + propertyFileName;
+//            }
+//        }
+        // 重写内容
+        // 1. md5 比较
+        // 2. 文件名比较
+        String path="";
+        try {
+            path = user.getWorkDir().substring(user.getWorkDir().indexOf(user.getOriDir()) + user.getOriDir().length() + 1);
+        }catch(Exception e){
         }
-        while(en.hasMoreElements()) {
-            String fileName=(String)en.nextElement();
-            String fileKey=(String)properties.getProperty(fileName);
-            if(fileKey.equals(md5Origin)) {
-                 properties.setProperty(fileName,md5Origin);
-                 properties.store(fos,"");
-                 //  TODO 结束 直接返回
-                response("226 Transfer complete.");//传输完毕
-                return ;
+        SqlSession sqlSession = sqlSessionFactory.openSession();
+        int parentName = -1;
+        String name;
+        FileModel fileModel = new FileModel();
+        FileMapper fileMapper = sqlSession.getMapper(FileMapper.class);
+        if(!("".equals(path))) {
+            String[] filePart = path.split("/");
+            for (String temp : filePart) {
+                name = temp;
+                fileModel.setId(0);
+                fileModel.setParentName(parentName);
+                fileModel.setName(name);
+                fileModel = fileMapper.queryFileModel(fileModel).get(0);
+                parentName = fileModel.getId();
             }
-            if(fileName.equals(strs[1])) {
-                String[] tempFileName=strs[1].split("\\.");
+        }
+
+        fileModel=new FileModel();
+        fileModel.setName(strs[1]);fileModel.setParentName(parentName);
+        List<FileModel> fileModelList=fileMapper.queryFileModel(fileModel);
+        while(fileModelList.size()!=0) {
+            String[] tempFileName=strs[1].split("\\.");
                 String houZhui="";
                 if(tempFileName.length>=2) {
-                    houZhui=tempFileName[1];
+                    houZhui="."+tempFileName[1];
                 }
-                if(tempFileName[0].endsWith(")")) {
-                    String temp=tempFileName[0].substring(tempFileName[0].indexOf("("),tempFileName[0].indexOf(")"));
+            if(tempFileName[0].endsWith(")")) {
+                    String temp=tempFileName[0].substring(tempFileName[0].lastIndexOf("(")+1,tempFileName[0].lastIndexOf(")"));
                     try {
-                        int tempNum=Integer.parseInt(temp)+1;
-                        propertyFileName=tempFileName[0].substring(0,tempFileName[0].indexOf("("))
-                                +"("+tempNum+")"+houZhui;
+                        int tempNum=1;
+                        try {
+                            tempNum = Integer.parseInt(temp) + 1;
+                            strs[1]=tempFileName[0].substring(0,strs[1].lastIndexOf("("))
+                                    +"("+tempNum+")"+houZhui;
+                        }catch(Exception e){
+                        }
                     } catch(Exception e) {
                         System.out.println(e);
                     }
                 } else {
-                    propertyFileName = tempFileName[0] + "(1)." + houZhui;
-                }
-                oldFileUrl = user.getWorkDir() + File.separator + propertyFileName;
+                strs[1] = tempFileName[0] + "(1)" + houZhui;
             }
+            fileModel=new FileModel();
+            fileModel.setName(strs[1]);fileModel.setParentName(parentName);
+            fileModelList=fileMapper.queryFileModel(fileModel);
+        }
+        fileModel=new FileModel();
+        fileModel.setMd5(md5Origin);
+        fileModelList=fileMapper.queryFileModel(fileModel);
+        if(fileModelList.size()!=0) {
+            response("226 Transfer complete.");//传输完毕
+            // 存入数据库
+            fileModel = new FileModel();
+            fileModel.setMd5(md5Origin);
+            fileModel.setName( strs[1]);
+            fileModel.setId(0);
+            fileModel.setParentName(parentName);
+            fileModel.setTime(TimeDealer.timeFormat(new Date()));
+            fileMapper.insertFileModel(fileModel);
+            sqlSession.commit();// 这里一定要提交，不然数据进不去数据库中
+            return ;
         }
 
         Properties memberProperties=new Properties();
@@ -308,7 +611,7 @@ public class Command {
         // 上传文件
         try {
             dSocket = new Socket(remoteHost, remotePort);
-            bos = new BufferedOutputStream(new FileOutputStream(oldFileUrl));//输出文件的位置
+            bos = new BufferedOutputStream(new FileOutputStream(user.getOriDir()+File.separator+strs[1]));//输出文件的位置
             bis = new BufferedInputStream(dSocket.getInputStream());// 客户端塞过来的流
             byte[] buf = new byte[1024];
             int l = 0;
@@ -334,22 +637,59 @@ public class Command {
 
         //对文件进行分割和上传
         List<String> files = new ArrayList<>();
-        File originFile = new File(oldFileUrl);
+        File originFile = new File(user.getOriDir()+File.separator+strs[1]);
 
         boolean flag=true;
         // 记录文件的md5
         String md5Str=getMd5ByFile(originFile);
-        Enumeration enTemp = properties.propertyNames();
-        while(enTemp.hasMoreElements()) {
-            String tempStr=(String)enTemp.nextElement();
-            if(md5Str.equals(properties.getProperty(tempStr))) {
-                flag=false;
-            }
-        }
-        properties.setProperty(propertyFileName,md5Str);
-        properties.store(fos,"");
-        fis.close();
-        fos.close();
+//        Enumeration enTemp = properties.propertyNames();
+//        while(enTemp.hasMoreElements()) {
+//            String tempStr=(String)enTemp.nextElement();
+//            if(md5Str.equals(properties.getProperty(tempStr))) {
+//                flag=false;
+//            }
+//        }
+//        properties.setProperty(propertyFileName,md5Str);
+//        properties.store(fos,"");
+        fileModel = new FileModel();
+        fileModel.setMd5(md5Str);
+        fileModel.setName(strs[1]);
+        fileModel.setParentName(parentName);
+        fileModel.setTime(TimeDealer.timeFormat(new Date()));
+        fileMapper.insertFileModel(fileModel);
+        sqlSession.commit();// 这里一定要提交，不然数据进不去数据库中
+//        fis.close();
+//        fos.close();
+
+        //存入数据库
+//        String path=user.getWorkDir().substring(user.getWorkDir().indexOf(user.getOriDir())+user.getOriDir().length()+1);
+//        SqlSession sqlSession = sqlSessionFactory.openSession();
+//        FileModel fileModel = new FileModel();
+//        int parentName = 0;
+//        String name;
+//        String [] filePart=path.split("/");
+//        FileMapper fileMapper = sqlSession.getMapper(FileMapper.class);
+//        for (String temp : filePart) {
+//            name = temp;
+//            fileModel.setParentName(parentName);
+//            fileModel.setName(name);
+//            fileModel = fileMapper.queryFileModel(fileModel).get(0);
+//            if (fileModel == null) {
+//                flag = true;
+//                break;
+//            }
+//            parentName = fileModel.getId();
+//        }
+//        try {
+//            fileModel.setMd5(md5Str);
+//            fileModel.setName(propertyFileName);
+//            fileModel.setParentName(fileModel.getId());
+//            fileModel.setTime(TimeDealer.timeFormat(new Date()));
+//            fileMapper.insertFileModel(fileModel);
+//            sqlSession.commit();// 这里一定要提交，不然数据进不去数据库中
+//        } finally {
+//            sqlSession.close();
+//        }
 
         // 分割文件
         if(flag) {
@@ -359,14 +699,14 @@ public class Command {
 //            String fileName = originFile.getName().split("\\.")[0];
                 String fileName = md5Str;
                 StringBuffer partFileName = new StringBuffer(LogUserService.workDir);
-                partFileName.append(File.separator);
+                partFileName.append("/");
                 partFileName.append(fileName);
                 //检查文件是否存在
                 File tempFile = new File(partFileName.toString());
                 if (!tempFile.exists()) {
                     tempFile.mkdir();
                 }
-                partFileName.append(File.separator);
+                partFileName.append("/");
                 partFileName.append(fileName);
                 partFileName.append("_");
                 partFileName.append(i);
@@ -428,22 +768,60 @@ public class Command {
     private boolean commandRETR() {
         BufferedInputStream fin = null;
         PrintStream dout = null;
-        String oldFileUrl = user.getWorkDir() + File.separator+ strs[1];// 请求文件的全路径
-        File file = new File(strs[1]);
-        // 文件名换成
-//        String fileName = strs[1].split("\\.")[0];
-        String fileName = "";
-        String dir = LogUserService.class.getResource("/").getPath();
-        dir += "file_name.properties";
-        try {
-            FileInputStream fis = new FileInputStream(dir);
-            Properties properties=new Properties();
-            properties.load(fis);
-            fileName= properties.getProperty(strs[1]);
-        } catch (Exception e) {
-
+        // 不晓得 用户写的是不是全路径
+        String oldFileUrl;
+        if (strs[1].contains(user.getOriDir())) {// 万一客户直接就把全路径写了呢
+            oldFileUrl = strs[1];
+        } else {
+            oldFileUrl = user.getWorkDir() + "/" + strs[1];// 请求文件的全路径
         }
 
+//        File file = new File(strs[1]);
+        // 文件名换成
+//        String fileName = strs[1].split("\\.")[0];
+//        String fileName = "";
+//        String dir = LogUserService.class.getResource("/").getPath();
+//        dir += "file_name.properties";
+//        try {
+//            FileInputStream fis = new FileInputStream(dir);
+//            Properties properties=new Properties();
+//            properties.load(fis);
+//            fileName= properties.getProperty(strs[1]);
+//        } catch (Exception e) {
+//
+//        }
+
+        SqlSession sqlSession = sqlSessionFactory.openSession();
+        FileModel fileModel = new FileModel();
+        int parentName = -1;
+        String name;
+//        String path=user.getWorkDir().substring(user.getWorkDir().indexOf(user.getOriDir())+user.getOriDir().length()+1);
+        String path="";
+        try {
+            path = user.getWorkDir().substring(user.getWorkDir().indexOf(user.getOriDir()) + user.getOriDir().length() + 1);
+        }catch(Exception e){
+
+        }
+        if(strs[1].startsWith("/")) {
+            path=strs[1].substring(1);
+        } else {
+            if("".equals(path)) {
+                path=strs[1];
+            } else {
+                path=path+"/"+strs[1];
+            }
+        }
+        String [] filePart=path.split("/");
+        FileMapper fileMapper = sqlSession.getMapper(FileMapper.class);
+        for (String temp : filePart) {
+            name = temp;
+            fileModel.setParentName(parentName);
+            fileModel.setId(0);
+            fileModel.setName(name);
+            fileModel = fileMapper.queryFileModel(fileModel).get(0);
+            parentName = fileModel.getId();
+        }
+        String fileName = fileModel.getMd5();
 
      /*   if (!file.exists()) {// 万一用户用的是全路径
             file = new File(oldFileUrl);
@@ -465,9 +843,9 @@ public class Command {
             for (int i = 0; i < NUM; i++) {
                 //先从本机读
                 StringBuffer fileUrl = new StringBuffer(LogUserService.workDir);
-                fileUrl.append(File.separator);
+                fileUrl.append("/");
                 fileUrl.append(fileName);
-                fileUrl.append(File.separator);
+                fileUrl.append("/");
                 fileUrl.append(fileName);
                 fileUrl.append("_");
                 fileUrl.append(i);
@@ -520,39 +898,110 @@ public class Command {
      * 用来进入某个文件
      */
     private boolean commandCWD() {
-        // 怎么说呢，其实很简单吧，应该就是把用户文件工作区拼上请求字符
-        if ("/".equals(strs[1]) || "\\".equals(strs[1])) {
-            user.setWorkDir(user.getOriDir());
-            response("250 Requested file action okay,the directory is "
-                    + user.getWorkDir());
-            return true;
-        }
-        // 判断文件夹存不存在
-        File workDir = new File(user.getWorkDir());
 
-        File[] files = workDir.listFiles(new FileFilter() {
-            @Override
-            public boolean accept(File paramFile) {
-                if (paramFile.getName().contains("."))
-                    return false;
+        Properties properties=new Properties();
+        String dir = LogUserService.class.getResource("/").getPath();
+        dir += "file_level.properties";
+        FileInputStream fis=null;
+        FileOutputStream fos=null;
+        try {
+            fis = new FileInputStream(dir);
+            properties.load(fis);
+            // 怎么说呢，其实很简单吧，应该就是把用户文件工作区拼上请求字符
+            if ("/".equals(strs[1]) || "\\".equals(strs[1])) {
+                user.setWorkDir(user.getOriDir());
+                response("250 Requested file action okay,the directory is "
+                        + user.getWorkDir());
                 return true;
             }
-        });// 文件夹的文件夹
-        boolean flag = false;
-        for (File f : files) {
-            if (f.getName().equals(strs[1])) {
-                flag = true;
-                break;
+            String path="";
+            // 假如以/ 开头
+            if (strs[1].startsWith("/")) {
+                //说明是全路径
+                path=strs[1].substring(1);
+            } else {
+                try {
+                    path = user.getWorkDir().substring(user.getWorkDir().indexOf(user.getOriDir()) + user.getOriDir().length() + 1);
+                }catch(Exception e){
+
+                }
+
+                if("".equals(path)) {
+                    path=strs[1];
+                } else {
+                    path=path+"/"+strs[1];
+                }
             }
+
+            String[] filePart = path.split("/");
+
+            int parentName = -1;
+            String name;
+            int id;
+            //进行校对
+            SqlSession sqlSession = sqlSessionFactory.openSession();
+            FileMapper fileMapper = sqlSession.getMapper(FileMapper.class);
+            FileModel fileModel = new FileModel();
+            boolean flag = false;
+            for (String temp : filePart) {
+                name = temp;
+                fileModel.setId(0);
+                fileModel.setParentName(parentName);
+                fileModel.setName(name);
+                fileModel = fileMapper.queryFileModel(fileModel).get(0);
+                if (fileModel == null) {
+                    flag = true;
+                    break;
+                }
+                parentName = fileModel.getId();
+            }
+            sqlSession.close();
+
+            if (!flag) {
+                if(strs[1].startsWith("/")) {
+                    user.setWorkDir(user.getOriDir()+strs[1]);
+                } else {
+                    user.setWorkDir(user.getWorkDir() + "/" + path);
+                }
+                response("250 Requested file action okay,the directory is "
+                        + user.getWorkDir());
+            } else {
+                response("550 The directory does not exists");
+                return false;
+            }
+        }catch(Exception e) {
+            System.out.println(e);
         }
-        if (flag) {
-            user.setWorkDir(user.getWorkDir() + File.separator + strs[1]);
-            response("250 Requested file action okay,the directory is "
-                    + user.getWorkDir());
-        } else {
-            response("550 The directory does not exists");
-        }
-        response("250 CWD command successful.");
+//            int i = 0;
+//            if ("".equals(filePart[0])) {
+//                i = 1;
+//            }
+//            for (int j = filePart.length - 1; j > i; j--) {
+////                if (properties.get)
+//            }
+//        }catch (Exception e) {
+//            System.out.println(e);
+//        }
+//
+//        // 判断文件夹存不存在
+//        File workDir = new File(user.getWorkDir());
+//
+//        File[] files = workDir.listFiles(new FileFilter() {
+//            @Override
+//            public boolean accept(File paramFile) {
+//                if (paramFile.getName().contains("."))
+//                    return false;
+//                return true;
+//            }
+//        });// 文件夹的文件夹
+//        boolean flag = false;
+//        for (File f : files) {
+//            if (f.getName().equals(strs[1])) {
+//                flag = true;
+//                break;
+//            }
+//        }
+
         return true;
     }
 
@@ -602,20 +1051,59 @@ public class Command {
      * List 命令：显示所有的文件
      */
     private void commandList() {
+        // 要输出的数据
+
         response("150 Data connection already open; Transfer starting.");
+
+
         OutputStreamWriter dStream = null;
         BufferedWriter dWriter = null;
         try {
 
             dSocket = new Socket(remoteHost, remotePort);
-
             dStream = new OutputStreamWriter(dSocket.getOutputStream(), "gb2312");
             dWriter = new BufferedWriter(dStream);
 
-            String tab = "     ";// 5个空格
-            String fMess="";// 文件信息
-            // 要输出的数据
-//            File file = new File(user.getWorkDir());
+
+
+//
+//            String tab = "     ";// 5个空格
+//            String fMess="";// 文件信息
+//
+//            String fileName = "";
+//            String dir = LogUserService.class.getResource("/").getPath();
+//            dir += "file_member.properties";
+//            try {
+//                FileInputStream fis = new FileInputStream(dir);
+//                Properties properties=new Properties();
+//                properties.load(fis);
+//                Enumeration enumeration = properties.propertyNames();
+//                while(enumeration.hasMoreElements()) {
+//                    String key=(String)enumeration.nextElement();
+//                    fMess = properties.getProperty(key) + tab + tab + key;
+//                    printStr(dWriter,fMess);
+//                }
+//            } catch (Exception e) {
+//                System.out.println(e);
+//            }
+//
+//        } catch (UnknownHostException e) {
+//            e.printStackTrace();
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//        } finally {
+//            try {
+//                dWriter.close();
+//                dStream.close();
+//                dSocket.close();
+//                dSocket = null;
+//            } catch (IOException e) {
+//                e.printStackTrace();
+//            }
+//
+//        }
+
+            //            File file = new File(user.getWorkDir());
 //            File[] files = file.listFiles();
 
 //
@@ -626,27 +1114,55 @@ public class Command {
 //                        + f.getName();
 //                printStr(dWriter, fMess);
 //            }
-            String fileName = "";
-            String dir = LogUserService.class.getResource("/").getPath();
-            dir += "file_member.properties";
-            try {
-                FileInputStream fis = new FileInputStream(dir);
-                Properties properties=new Properties();
-                properties.load(fis);
-                Enumeration enumeration = properties.propertyNames();
-                while(enumeration.hasMoreElements()) {
-                    String key=(String)enumeration.nextElement();
-                    fMess = properties.getProperty(key) + tab + tab + key;
-                    printStr(dWriter,fMess);
-                }
-            } catch (Exception e) {
-                System.out.println(e);
-            }
 
-        } catch (UnknownHostException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
+            SqlSession sqlSession = sqlSessionFactory.openSession();
+            FileMapper fileMapper = sqlSession.getMapper(FileMapper.class);
+            FileModel fileModel = new FileModel();
+            boolean flag = false;
+            String tab = "     ";// 5个空格
+            String name;
+            int parentName = -1;
+//            String[] filePart = user.getWorkDir().split("/");
+            String path="";
+            try {
+                path = user.getWorkDir().substring(user.getWorkDir().indexOf(user.getOriDir()) + user.getOriDir().length() + 1);
+            }catch(Exception e){
+
+            }
+            if(strs[1].startsWith("/")) {
+                path=strs[1].substring(1);
+            }
+            if("".equals(path)) {
+                fileModel.setId(-1);
+            } else {
+                String[] filePart = path.split("/");
+                for (String temp : filePart) {
+                    name = temp;
+                    fileModel.setId(0);
+                    fileModel.setParentName(parentName);
+                    fileModel.setName(name);
+                    fileModel = fileMapper.queryFileModel(fileModel).get(0);
+                    parentName = fileModel.getId();
+                }
+            }
+            fileModel.setName(null);
+            fileModel.setMd5(null);
+            fileModel.setParentName(fileModel.getId());
+            fileModel.setTime(null);
+            fileModel.setId(0);
+            List<FileModel> fileModelList = fileMapper.queryFileModel(fileModel);
+            sqlSession.close();
+            String fMess;
+            for (FileModel temp : fileModelList) {
+                if(!"".equals(temp.getMd5())) {
+                    fMess=temp.getTime()+"                    0 "+temp.getName();
+                } else {
+                    fMess = temp.getTime()+"       <DIR>          "+temp.getName();
+                }
+                printStr(dWriter, fMess);
+            }
+        }catch (Exception e) {
+            System.out.println(e);
         } finally {
             try {
                 dWriter.close();
@@ -656,81 +1172,90 @@ public class Command {
             } catch (IOException e) {
                 e.printStackTrace();
             }
-
+//
         }
         response("226 transfer complete");
 
     }
 
-    private void delFile(String fileName) {
-        //删除本地文件
-        String fileAllPath=user.getWorkDir()+File.separator + fileName;
-        File fileAllFile=new File(fileAllPath);
-        String [] fileTemp=fileAllFile.list();
-        for(String temp:fileTemp) {
-            new File(fileAllPath+File.separator+temp).delete();
-        }
-        //删除服务器的内容
-        for(int j=0;j<SERVICES.size();j++) {
-            String url = SERVICES.get(j);//拿出一个服务器地址
-            url += "/deleteFile/"+fileName.split("\\.")+"_"+j+".part";
-            HttpClient client = HttpClients.createDefault();
-            HttpPost post = new HttpPost(url);
-            HttpResponse response = null;
-            try {
-                response = client.execute(post);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-    }
 
 
 
 
-    private  void delFolder(String folderPath) {
-        try {
-            String fileName=folderPath;
-            folderPath= user.getWorkDir()+ File.separator+folderPath;
-            delAllFile(folderPath); //删除完里面所有内容
-            String filePath = folderPath;
-            filePath = filePath.toString();
-            java.io.File myFilePath = new java.io.File(filePath);
-            myFilePath.delete(); //删除空文件夹
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-    private  boolean delAllFile(String path) {
-        boolean flag = false;
+//    private  void delFolder(String folderPath) {
+//        try {
+//            String fileName=folderPath;
+//            folderPath= user.getWorkDir()+ "/"+folderPath;
+//            delAllFile(folderPath); //删除完里面所有内容
+//            String filePath = folderPath;
+//            filePath = filePath.toString();
+//            java.io.File myFilePath = new java.io.File(filePath);
+//            myFilePath.delete(); //删除空文件夹
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
+//    }
 
-        File file = new File(path);
-        if (!file.exists()) {
-            return flag;
-        }
-        if (!file.isDirectory()) {
-            return flag;
-        }
-        String[] tempList = file.list();
-        File temp = null;
-        for (int i = 0; i < tempList.length; i++) {
-            if (path.endsWith(File.separator)) {
-                temp = new File(path + tempList[i]);
-            } else {
-                temp = new File(path + File.separator + tempList[i]);
-            }
-            if (temp.isFile()) {
-                temp.delete();
-
-            }
-            if (temp.isDirectory()) {
-                delAllFile(path + File.separator + tempList[i]);//先删除文件夹里面的文件
-                delFolder(path +File.separator + tempList[i]);//再删除空文件夹
-                flag = true;
-            }
-        }
-        return flag;
-    }
+//    private  boolean deleteFolder(String path) {
+//        boolean flag = false;
+//
+//        File file = new File(path);
+//        if (!file.exists()) {
+//            return flag;
+//        }
+//        if (!file.isDirectory()) {
+//            return flag;
+//        }
+//        String[] tempList = file.list();
+//        File temp = null;
+//        for (int i = 0; i < tempList.length; i++) {
+//            if (path.endsWith("/")) {
+//                temp = new File(path + tempList[i]);
+//            } else {
+//                temp = new File(path + "/" + tempList[i]);
+//            }
+//            if (temp.isFile()) {
+//                temp.delete();
+//
+//            }
+//            if (temp.isDirectory()) {
+//                delAllFile(path + "/" + tempList[i]);//先删除文件夹里面的文件
+//                delFolder(path +"/" + tempList[i]);//再删除空文件夹
+//                flag = true;
+//            }
+//        }
+//        return flag;
+//    }
+//    private  boolean delAllFile(String path) {
+//        boolean flag = false;
+//
+//        File file = new File(path);
+//        if (!file.exists()) {
+//            return flag;
+//        }
+//        if (!file.isDirectory()) {
+//            return flag;
+//        }
+//        String[] tempList = file.list();
+//        File temp = null;
+//        for (int i = 0; i < tempList.length; i++) {
+//            if (path.endsWith("/")) {
+//                temp = new File(path + tempList[i]);
+//            } else {
+//                temp = new File(path + "/" + tempList[i]);
+//            }
+//            if (temp.isFile()) {
+//                temp.delete();
+//
+//            }
+//            if (temp.isDirectory()) {
+//                delAllFile(path + "/" + tempList[i]);//先删除文件夹里面的文件
+//                delFolder(path +"/" + tempList[i]);//再删除空文件夹
+//                flag = true;
+//            }
+//        }
+//        return flag;
+//    }
 
     private static String getMd5ByFile(File file) throws FileNotFoundException {
         String value = null;

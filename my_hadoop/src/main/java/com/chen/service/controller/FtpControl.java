@@ -43,7 +43,6 @@ public class FtpControl extends Thread{
 			for(;;) {
 				//读取所有的内容
 				clientStr=reader.readLine();
-
 				commander.command(clientStr);
 				
 			}

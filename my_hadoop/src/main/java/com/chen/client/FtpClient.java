@@ -31,7 +31,8 @@ public class FtpClient {
                 + "3.上传文件: send\n"
                 + "4.下载文件: get\n"
                 + "5.删除文件：delete\n"
-                + "6.进入某一级目录: cd\n");
+                + "6.进入某一级目录: cd\n"
+                + "7.创建目录: mkdir\n");
         while(true) {
             Scanner scanner= ScannerUtil.getScanner();
             if(user.isLogin()) {
@@ -48,6 +49,7 @@ public class FtpClient {
                 case "delete":ftpService.deleteOneFile(user);break;//删除文件
                 case "cd":ftpService.changDirectory(user);break;//改变工作区间
                 case "auto":ftpService.loginUserByAuto(user);break;//自动登陆
+                case "mkdir":ftpService.mkDir(user);break;
                 default:System.out.println("指令有误");break;
             }
 
