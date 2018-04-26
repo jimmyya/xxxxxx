@@ -72,7 +72,7 @@ public class Command {
      *
      * @param str
      */
-    private void response(String str) {
+    private boolean response(String str) {
         try {
             writer.write(str);
             writer.newLine();
@@ -80,7 +80,9 @@ public class Command {
             System.out.println("服务响应：" + str);
         } catch (IOException e) {
             e.printStackTrace();
+            return false;
         }
+        return true;
     }
 
     /**
@@ -179,7 +181,7 @@ public class Command {
     /**
      * 创建新的文件
      */
-    private void commandXMKD() {
+    private boolean commandXMKD() {
         String mkdirFile = user.getWorkDir() + "/" + strs[1];
         String path="";
         try {
@@ -223,6 +225,7 @@ public class Command {
         } finally {
             sqlSession.close();
         }
+        return true;
     }
 
 
@@ -233,7 +236,7 @@ public class Command {
      * 删除真正的文件
      * @param fileName
      */
-    private void deleteRealFile(String fileName) {
+    private boolean deleteRealFile(String fileName) {
         //删除本地文件
 //        String fileAllPath=user.getWorkDir()+"/" + fileName;
 //        File fileAllFile=new File(fileAllPath);
@@ -261,6 +264,7 @@ public class Command {
                 e.printStackTrace();
             }
         }
+        return true;
     }
 
     private void deleteOneFileByMd5(int id,String md5) {
@@ -393,7 +397,7 @@ public class Command {
         return true;
     }
 
-    private void commandDELE() {
+    private boolean commandDELE() {
         Properties properties=new Properties();
 //        String dir = LogUserService.class.getResource("/").getPath();
 //        dir += "file_level.properties";
@@ -425,7 +429,12 @@ public class Command {
                 fileModel.setId(0);
                 fileModel.setParentName(parentName);
                 fileModel.setName(name);
-                fileModel = fileMapper.queryFileModel(fileModel).get(0);
+                try {
+                    fileModel = fileMapper.queryFileModel(fileModel).get(0);
+                } catch (Exception e) {
+                    response("404 File not exists");
+                    return false;
+                }
                 parentName = fileModel.getId();
             }
 
@@ -456,12 +465,13 @@ public class Command {
         //删除的是文件
 
         response("200 Command complete.");//删除完毕
+        return true;
     }
     /**
      * 上传文件
      * 对文件进行分隔 然后上传
      */
-    private void commandSTOR() throws Exception {
+    private boolean commandSTOR() throws Exception {
         String oldFileUrl = "";
         String propertyFileName="";
         if (strs[1].contains(user.getOriDir())) {// 万一客户直接就把全路径写了呢
@@ -595,7 +605,7 @@ public class Command {
             fileModel.setTime(TimeDealer.timeFormat(new Date()));
             fileMapper.insertFileModel(fileModel);
             sqlSession.commit();// 这里一定要提交，不然数据进不去数据库中
-            return ;
+            return true;
         }
 
         Properties memberProperties=new Properties();
@@ -757,7 +767,7 @@ public class Command {
             executor.shutdown();
         }
         originFile.delete();
-
+        return true;
     }
 
     /**
@@ -818,7 +828,12 @@ public class Command {
             fileModel.setParentName(parentName);
             fileModel.setId(0);
             fileModel.setName(name);
-            fileModel = fileMapper.queryFileModel(fileModel).get(0);
+            try {
+                fileModel = fileMapper.queryFileModel(fileModel).get(0);
+            } catch (Exception e){
+                response("550 The system cannot find the path specified.");
+                return false;
+            }
             parentName = fileModel.getId();
         }
         String fileName = fileModel.getMd5();
@@ -838,8 +853,6 @@ public class Command {
             dout = new PrintStream(dSocket.getOutputStream(), true);
 
             int l = 0;
-
-
             for (int i = 0; i < NUM; i++) {
                 //先从本机读
                 StringBuffer fileUrl = new StringBuffer(LogUserService.workDir);
@@ -875,7 +888,6 @@ public class Command {
                 }
             }
             response("226 Transfer complete.");
-
         } catch (Exception e) {
             e.printStackTrace();
             response("550 The system cannot find the path specified.");
@@ -948,8 +960,9 @@ public class Command {
                 fileModel.setId(0);
                 fileModel.setParentName(parentName);
                 fileModel.setName(name);
-                fileModel = fileMapper.queryFileModel(fileModel).get(0);
-                if (fileModel == null) {
+                try {
+                    fileModel = fileMapper.queryFileModel(fileModel).get(0);
+                }catch (Exception e) {
                     flag = true;
                     break;
                 }

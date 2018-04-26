@@ -129,6 +129,9 @@ public class FtpService {
                     System.out.println("no file or have been broken");
                 }
             }
+            if(files.length==0) {
+                System.out.println("no file or have been broken");
+            }
         } catch (IOException e) {
             logger.error(e.getMessage(), e);
         }
@@ -159,7 +162,11 @@ public class FtpService {
             // 下载文件
             File localFile = new File(file.getNewFileURL());
             OutputStream os = new FileOutputStream(localFile);
-            ftpClient.retrieveFile(file.getOldFileURL(), os);
+            if(ftpClient.retrieveFile(file.getOldFileURL(), os)) {
+                System.out.println("下载成功 "+file.getNewFileURL());
+            } else {
+                System.out.println("下载失败");
+            }
             os.close();
 
         } catch (IOException e) {
@@ -210,7 +217,11 @@ public class FtpService {
             ftpClient.setFileType(FTPClient.BINARY_FILE_TYPE);
 //            ftpClient.makeDirectory(filePath);
 //            ftpClient.changeWorkingDirectory(filePath);
-            ftpClient.storeFile(fileName, is);
+            if(ftpClient.storeFile(fileName, is)) {
+                System.out.println("上传成功");
+            } else {
+                System.out.println("上传失败");
+            }
             is.close();
             flag = true;
         } catch (FileNotFoundException e) {
@@ -248,6 +259,8 @@ public class FtpService {
                     }
                 }
                 user.setFtpClient(ftpClient);
+            } else {
+                System.out.println("路径不存在");
             }
 
         } catch (IOException e) {
@@ -309,7 +322,11 @@ public class FtpService {
         System.out.print("删除文件    ");
         try {
 //            ftpClient.changeWorkingDirectory(user.getWorkPath());
-            ftpClient.deleteFile(scanner.next());
+            if(ftpClient.deleteFile(scanner.next())) {
+                System.out.println("删除成功");
+            } else {
+                System.out.println("删除失败");
+            }
         } catch (IOException e) {
             logger.error(e.getMessage(), e);
         }
@@ -320,7 +337,12 @@ public class FtpService {
         FTPClient ftpClient=user.getFtpClient();
         Scanner scanner = ScannerUtil.getScanner();
         try {
-            ftpClient.makeDirectory(scanner.next());
+            if(ftpClient.makeDirectory(scanner.next())) {
+                System.out.println("创建文件夹成功");
+            } else {
+                System.out.println("创建文件夹失败");
+            }
+
         } catch (IOException e) {
             e.printStackTrace();
         }
